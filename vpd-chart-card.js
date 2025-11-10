@@ -64,11 +64,11 @@ class VPDChartCard extends HTMLElement {
           padding: 0 20px 20px 20px;
         }
         .vpd-box {
-          padding: 20px;
-          border-radius: 12px;
+          padding: 14px;
+          border-radius: 10px;
           text-align: center;
           color: white;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
           transition: transform 0.2s, box-shadow 0.2s;
           position: relative;
           overflow: hidden;
@@ -85,29 +85,29 @@ class VPDChartCard extends HTMLElement {
         }
         .vpd-box:hover {
           transform: translateY(-2px);
-          box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
         .vpd-label {
-          font-size: 12px;
+          font-size: 11px;
           opacity: 0.95;
-          margin-bottom: 8px;
+          margin-bottom: 6px;
           text-transform: uppercase;
-          letter-spacing: 0.8px;
+          letter-spacing: 0.6px;
           font-weight: 600;
         }
         .vpd-number {
-          font-size: 36px;
+          font-size: 28px;
           font-weight: 700;
           line-height: 1;
           text-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .value-box {
           background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
-          padding: 18px;
-          border-radius: 12px;
+          padding: 12px;
+          border-radius: 10px;
           text-align: center;
           color: white;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
           transition: transform 0.2s, box-shadow 0.2s;
           position: relative;
           overflow: hidden;
@@ -124,69 +124,29 @@ class VPDChartCard extends HTMLElement {
         }
         .value-box:hover {
           transform: translateY(-2px);
-          box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
         .value-label {
-          font-size: 11px;
+          font-size: 10px;
           opacity: 0.95;
-          margin-bottom: 6px;
+          margin-bottom: 4px;
           text-transform: uppercase;
-          letter-spacing: 0.8px;
+          letter-spacing: 0.6px;
           font-weight: 600;
         }
         .value-number {
-          font-size: 32px;
+          font-size: 24px;
           font-weight: 700;
           line-height: 1;
           text-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .value-unit {
-          font-size: 16px;
+          font-size: 14px;
           opacity: 0.85;
-          margin-left: 3px;
+          margin-left: 2px;
           font-weight: 500;
         }
-        .vpd-status {
-          margin: 0 20px 20px 20px;
-          padding: 18px;
-          border-radius: 12px;
-          text-align: center;
-          font-weight: 600;
-          font-size: 15px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-          position: relative;
-          overflow: hidden;
-        }
-        .vpd-status::before {
-          content: '';
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
-          pointer-events: none;
-        }
-        .vpd-status.optimal {
-          background: linear-gradient(135deg, #4CAF50, #45a049);
-          color: white;
-          box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
-        }
-        .vpd-status.acceptable {
-          background: linear-gradient(135deg, #FFC107, #FFB300);
-          color: white;
-          box-shadow: 0 4px 12px rgba(255, 193, 7, 0.3);
-        }
-        .vpd-status.warning {
-          background: linear-gradient(135deg, #FF9800, #F57C00);
-          color: white;
-          box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);
-        }
-        .vpd-status.danger {
-          background: linear-gradient(135deg, #F44336, #E53935);
-          color: white;
-          box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
-        }
+
         .tooltip {
           position: absolute;
           background: rgba(0, 0, 0, 0.9);
@@ -205,34 +165,7 @@ class VPDChartCard extends HTMLElement {
         .tooltip.show {
           opacity: 1;
         }
-        .history-container {
-          padding: 0 20px 20px 20px;
-          display: ${this.config.show_history === false ? 'none' : 'block'};
-        }
-        .history-canvas {
-          width: 100%;
-          height: 150px;
-          background: var(--card-background-color);
-          border-radius: 8px;
-          border: 1px solid rgba(128, 128, 128, 0.1);
-        }
-        .history-legend {
-          display: flex;
-          justify-content: center;
-          gap: 20px;
-          margin-top: 10px;
-          font-size: 11px;
-        }
-        .legend-item {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-        .legend-color {
-          width: 20px;
-          height: 3px;
-          border-radius: 2px;
-        }
+
       </style>
       <ha-card>
         <div class="card-header">${this.config.title || 'VPD Chart'}</div>
@@ -240,7 +173,6 @@ class VPDChartCard extends HTMLElement {
           <canvas id="vpd-canvas" width="600" height="400"></canvas>
           <div class="tooltip" id="tooltip"></div>
         </div>
-        <div class="vpd-status" id="vpd-status"></div>
         <div class="current-values">
           <div class="value-box" style="background: linear-gradient(135deg, #FF6B6B, #EE5A6F);">
             <div class="value-label">Air Temperature</div>
@@ -263,23 +195,6 @@ class VPDChartCard extends HTMLElement {
           <div class="vpd-box" style="background: linear-gradient(135deg, #FF9F43, #EE5A24);">
             <div class="vpd-label">Room VPD</div>
             <div class="vpd-number" id="room-vpd-value">--</div>
-          </div>
-        </div>
-        <div class="history-container">
-          <canvas id="history-canvas" class="history-canvas"></canvas>
-          <div class="history-legend">
-            <div class="legend-item">
-              <div class="legend-color" style="background: #FF6B6B;"></div>
-              <span>Temperature</span>
-            </div>
-            <div class="legend-item">
-              <div class="legend-color" style="background: #4ECDC4;"></div>
-              <span>Humidity</span>
-            </div>
-            <div class="legend-item">
-              <div class="legend-color" style="background: #FFD93D;"></div>
-              <span>VPD</span>
-            </div>
           </div>
         </div>
       </ha-card>
@@ -417,12 +332,7 @@ class VPDChartCard extends HTMLElement {
 
     // Update display
     this.updateValues(airTemp, humidity, leafTemp, vpd, isFahrenheit);
-    this.updateStatus(vpd, this.config.growth_stage || 'vegetative');
     this.drawVPDChart(airTemp, humidity, leafTemp, vpd);
-    
-    if (this.config.show_history !== false) {
-      this.drawHistoryGraph();
-    }
   }
 
   addToHistory(airTemp, humidity, leafTemp, vpd) {
@@ -578,8 +488,9 @@ class VPDChartCard extends HTMLElement {
         const leafTemp = leafTempMin + (i / resolution) * (leafTempMax - leafTempMin);
         const humidity = humidityMin + (j / resolution) * (humidityMax - humidityMin);
         
-        // Calculate VPD using leaf temperature (this is the correct way!)
-        const vpd = this.calculateVPDFromLeaf(leafTemp, humidity);
+        // Calculate VPD correctly: need air temp estimate
+        const airTemp = leafTemp + 2; // Estimate air temp from leaf temp
+        const vpd = this.calculateVPD(airTemp, humidity, leafTemp);
         
         const x = padding + (leafTemp - leafTempMin) / (leafTempMax - leafTempMin) * chartWidth;
         const y = padding + chartHeight - (humidity - humidityMin) / (humidityMax - humidityMin) * chartHeight;
@@ -725,8 +636,9 @@ class VPDChartCard extends HTMLElement {
       const leafTemp = leafTempMin + (x - padding) / chartWidth * (leafTempMax - leafTempMin);
       const humidity = humidityMax - (y - padding) / chartHeight * (humidityMax - humidityMin);
       
-      // Calculate VPD using leaf temperature
-      const vpd = this.calculateVPDFromLeaf(leafTemp, humidity);
+      // Calculate VPD correctly (estimate air temp from leaf temp)
+      const airTemp = leafTemp + 2;
+      const vpd = this.calculateVPD(airTemp, humidity, leafTemp);
       
       tooltip.innerHTML = `
         <strong>Leaf: ${leafTemp.toFixed(1)}°C, RH: ${humidity.toFixed(0)}%</strong><br>
