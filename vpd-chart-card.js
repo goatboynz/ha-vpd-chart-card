@@ -2,6 +2,10 @@ class VPDChartCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
+    this.zoomLevel = 1;
+    this.minZoom = 1;
+    this.maxZoom = 3;
+    this.isPanning = false;
   }
 
   setConfig(config) {
@@ -11,13 +15,74 @@ class VPDChartCard extends HTMLElement {
     if (!config.humidity_sensor) {
       throw new Error('Please define humidity_sensor');
     }
-    this.config = config;
+    
+    this.config = {
+      ...config,
+      min_temperature: config.min_temperature || 15,
+      max_temperature: config.max_temperature || 35,
+      min_humidity: config.min_humidity || 30,
+      max_humidity: config.max_humidity || 90,
+      leaf_temperature_offset: config.leaf_temperature_offset || 2,
+      growth_stage: config.growth_stage || 'vegetative',
+      enable_crosshair: config.enable_crosshair !== false,
+      enable_zoom: config.enable_zoom !== false,
+      title: config.title || 'VPD Chart'
+    };
+    
+    this.vpd_phases = config.vpd_phases || [
+      { upper: 0, className: 'gray-danger-zone', color: '#999999' },
+      { lower: 0, upper: 0.4, className: 'under-transpiration', color: '#1a6c9c' },
+      { lower: 0.4, upper: 0.8, className: 'early-veg', color: '#22ab9c' },
+      { lower: 0.8, upper: 1.2, className: 'late-veg', color: '#9cc55b' },
+      { lower: 1.2, upper: 1.6, className: 'mid-late-flower', color: '#e7c12b' },
+      { lower: 1.6, className: 'danger-zone', color: '#ce4234' }
+    ];
+    
     this.render();
   }
 
   set hass(hass) {
     this._hass = hass;
     this.updateCard();
+  }
+
+  calculateVPD(Tleaf, Tair, RH, unit = '°C') {
+    // Convert Fahrenheit to Celsius if needed
+    if (unit === '°F' || unit === 'F') {
+      Tleaf = (Tleaf - 32) * 5 / 9;
+      Tair = (Tair - 32) * 5 / 9;
+    }
+    
+    // Saturation vapor pressure at leaf temperature (kPa)
+    const VPleaf = 610.7 * Math.exp(17.27 * Tleaf / (Tleaf + 237.3)) / 1000;
+    
+    // Actual vapor pressure at air temperature (kPa)
+    const VPair = 610.7 * Math.exp(17.27 * Tair / (Tair + 237.3)) / 1000 * RH / 100;
+    
+    return Math.max(0, VPleaf - VPair);
+  }
+
+  getPhaseClass(vpd) {
+    for (const phase of this.vpd_phases) {
+      if (phase.upper === undefined) {
+        if (vpd >= phase.lower) {
+          return phase.className;
+        }
+      } else if (vpd <= phase.upper && (!phase.lower || vpd >= phase.lower)) {
+        return phase.className;
+      }
+    }
+    return '';
+  }
+
+  getColorForVpd(vpd) {
+    const className = this.getPhaseClass(vpd);
+    for (const phase of this.vpd_phases) {
+      if (phase.className === className) {
+        return phase.color;
+      }
+    }
+    return '#999999';
   }
 
   render() {
@@ -27,254 +92,299 @@ class VPDChartCard extends HTMLElement {
           padding: 0;
           overflow: hidden;
           background: var(--card-background-color);
-          border-radius: 12px;
         }
         .card-header {
-          font-size: 22px;
-          font-weight: 600;
-          padding: 20px 20px 0 20px;
+          font-size: 20px;
+          font-weight: 500;
+          padding: 16px;
           color: var(--primary-text-color);
-          letter-spacing: 0.3px;
         }
         .vpd-container {
           position: relative;
           width: 100%;
-          padding: 20px;
-          background: linear-gradient(180deg, 
-            rgba(var(--rgb-primary-color, 33, 150, 243), 0.02) 0%, 
-            transparent 100%);
+          padding: 16px;
+          overflow: hidden;
+          cursor: crosshair;
+        }
+        .vpd-container:active {
+          cursor: grabbing !important;
         }
         canvas {
           width: 100%;
-          height: 100%;
-          border-radius: 12px;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-          background: var(--card-background-color);
+          height: 400px;
+          display: block;
         }
-
-        .vpd-values {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 12px;
-          padding: 0 20px 20px 20px;
-        }
-        .vpd-box {
-          padding: 14px;
-          border-radius: 10px;
-          text-align: center;
-          color: white;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-          transition: transform 0.2s, box-shadow 0.2s;
-          position: relative;
-          overflow: hidden;
-        }
-        .vpd-box::before {
-          content: '';
+        .crosshair {
           position: absolute;
-          top: 0;
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 0.1s;
+        }
+        .crosshair.show {
+          opacity: 1;
+        }
+        .horizontal-line {
+          position: absolute;
           left: 0;
           right: 0;
-          bottom: 0;
-          background: linear-gradient(135deg, rgba(255,255,255,0.1), transparent);
-          pointer-events: none;
+          height: 1px;
+          background: rgba(255, 255, 255, 0.5);
         }
-        .vpd-box:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }
-        .vpd-label {
-          font-size: 11px;
-          opacity: 0.95;
-          margin-bottom: 6px;
-          text-transform: uppercase;
-          letter-spacing: 0.6px;
-          font-weight: 600;
-        }
-        .vpd-number {
-          font-size: 28px;
-          font-weight: 700;
-          line-height: 1;
-          text-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .value-box {
-          background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
-          padding: 12px;
-          border-radius: 10px;
-          text-align: center;
-          color: white;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-          transition: transform 0.2s, box-shadow 0.2s;
-          position: relative;
-          overflow: hidden;
-        }
-        .value-box::before {
-          content: '';
+        .vertical-line {
           position: absolute;
           top: 0;
-          left: 0;
-          right: 0;
           bottom: 0;
-          background: linear-gradient(135deg, rgba(255,255,255,0.1), transparent);
-          pointer-events: none;
+          width: 1px;
+          background: rgba(255, 255, 255, 0.5);
         }
-        .value-box:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }
-        .value-label {
-          font-size: 10px;
-          opacity: 0.95;
-          margin-bottom: 4px;
-          text-transform: uppercase;
-          letter-spacing: 0.6px;
-          font-weight: 600;
-        }
-        .value-number {
-          font-size: 24px;
-          font-weight: 700;
-          line-height: 1;
-          text-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .value-unit {
-          font-size: 14px;
-          opacity: 0.85;
-          margin-left: 2px;
-          font-weight: 500;
-        }
-
         .tooltip {
           position: absolute;
           background: rgba(0, 0, 0, 0.9);
           color: white;
-          padding: 10px 14px;
-          border-radius: 8px;
+          padding: 8px 12px;
+          border-radius: 6px;
           font-size: 12px;
           pointer-events: none;
           opacity: 0;
           transition: opacity 0.2s;
           z-index: 1000;
           white-space: nowrap;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+          transform: translate(-50%, -100%);
+          margin-top: -10px;
         }
         .tooltip.show {
           opacity: 1;
         }
-
+        .tooltip-line {
+          margin: 2px 0;
+        }
+        .vpd-values {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
+          padding: 0 16px 16px 16px;
+        }
+        .vpd-box {
+          padding: 12px;
+          border-radius: 8px;
+          text-align: center;
+          color: white;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .vpd-label {
+          font-size: 11px;
+          opacity: 0.9;
+          margin-bottom: 4px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          font-weight: 600;
+        }
+        .vpd-number {
+          font-size: 24px;
+          font-weight: 700;
+        }
+        .vpd-unit {
+          font-size: 14px;
+          opacity: 0.85;
+          margin-left: 2px;
+        }
+        .vpd-legend {
+          display: flex;
+          justify-content: center;
+          flex-wrap: wrap;
+          gap: 8px;
+          padding: 0 16px 16px 16px;
+          font-size: 11px;
+        }
+        .legend-item {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .legend-color {
+          width: 16px;
+          height: 16px;
+          border-radius: 3px;
+        }
       </style>
       <ha-card>
-        <div class="card-header">${this.config.title || 'VPD Chart'}</div>
+        <div class="card-header">${this.config.title}</div>
         <div class="vpd-container" id="vpd-container">
-          <canvas id="vpd-canvas" width="600" height="400"></canvas>
+          <canvas id="vpd-canvas"></canvas>
+          <div class="crosshair horizontal-line" id="h-line"></div>
+          <div class="crosshair vertical-line" id="v-line"></div>
           <div class="tooltip" id="tooltip"></div>
         </div>
         <div class="vpd-values">
-          <div class="vpd-box" style="background: linear-gradient(135deg, #FFD93D, #F6C90E);">
+          <div class="vpd-box" id="leaf-vpd-box">
             <div class="vpd-label">Leaf VPD</div>
             <div class="vpd-number" id="leaf-vpd-value">--</div>
           </div>
-          <div class="vpd-box" style="background: linear-gradient(135deg, #FF9F43, #EE5A24);">
+          <div class="vpd-box" id="room-vpd-box">
             <div class="vpd-label">Room VPD</div>
             <div class="vpd-number" id="room-vpd-value">--</div>
           </div>
         </div>
+        <div class="vpd-legend" id="legend"></div>
       </ha-card>
     `;
-    
-    setTimeout(() => this.setupInteraction(), 0);
+
+    this.setupEventListeners();
+    this.buildLegend();
   }
 
-  drawHistoryGraph() {
-    const canvas = this.shadowRoot.getElementById('history-canvas');
-    if (!canvas || !this._history || this._history.length < 2) return;
+  buildLegend() {
+    const legend = this.shadowRoot.getElementById('legend');
+    const labels = {
+      'gray-danger-zone': 'Too Low',
+      'under-transpiration': 'Under Transpiration',
+      'early-veg': 'Early Veg',
+      'late-veg': 'Late Veg',
+      'mid-late-flower': 'Mid-Late Flower',
+      'danger-zone': 'Too High'
+    };
+    
+    legend.innerHTML = this.vpd_phases.map(phase => `
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: ${phase.color}"></div>
+        <span>${labels[phase.className] || phase.className}</span>
+      </div>
+    `).join('');
+  }
 
-    const ctx = canvas.getContext('2d');
+  setupEventListeners() {
+    const container = this.shadowRoot.getElementById('vpd-container');
+    const canvas = this.shadowRoot.getElementById('vpd-canvas');
+    
+    if (this.config.enable_crosshair) {
+      container.addEventListener('mousemove', this.handleMouseMove.bind(this));
+      container.addEventListener('mouseleave', this.handleMouseLeave.bind(this));
+    }
+    
+    if (this.config.enable_zoom) {
+      container.addEventListener('wheel', this.handleZoom.bind(this), { passive: false });
+      container.addEventListener('mousedown', this.handleMouseDown.bind(this));
+      container.addEventListener('mouseup', this.handleMouseUp.bind(this));
+      container.addEventListener('auxclick', (e) => {
+        if (e.button === 1) { // Middle mouse button resets zoom
+          this.zoomLevel = 1;
+          canvas.style.transform = `scale(${this.zoomLevel})`;
+        }
+      });
+    }
+  }
+
+  handleMouseMove(e) {
+    const container = this.shadowRoot.getElementById('vpd-container');
+    const canvas = this.shadowRoot.getElementById('vpd-canvas');
+    const tooltip = this.shadowRoot.getElementById('tooltip');
+    const hLine = this.shadowRoot.getElementById('h-line');
+    const vLine = this.shadowRoot.getElementById('v-line');
+    
+    if (this.isPanning) {
+      const dx = e.clientX - this.startX;
+      const dy = e.clientY - this.startY;
+      canvas.style.transform = `scale(${this.zoomLevel}) translate(${(this.startLeft + dx) / this.zoomLevel}px, ${(this.startTop + dy) / this.zoomLevel}px)`;
+      return;
+    }
+    
     const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
     
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
-
-    const width = rect.width;
-    const height = rect.height;
-    const padding = 40;
-    const chartWidth = width - padding * 2;
-    const chartHeight = height - padding * 2;
-
-    ctx.clearRect(0, 0, width, height);
-
-    // Get data ranges
-    const temps = this._history.map(h => h.airTemp);
-    const humidities = this._history.map(h => h.humidity);
-    const vpds = this._history.map(h => h.vpd);
+    // Show crosshair
+    if (this.config.enable_crosshair) {
+      hLine.style.top = `${e.clientY - container.getBoundingClientRect().top}px`;
+      vLine.style.left = `${e.clientX - container.getBoundingClientRect().left}px`;
+      hLine.classList.add('show');
+      vLine.classList.add('show');
+    }
     
-    const tempMin = Math.min(...temps) - 2;
-    const tempMax = Math.max(...temps) + 2;
-    const humidityMin = Math.min(...humidities) - 5;
-    const humidityMax = Math.max(...humidities) + 5;
-    const vpdMin = 0;
-    const vpdMax = Math.max(...vpds) + 0.5;
-
-    const now = Date.now();
-    const timeRange = 24 * 60 * 60 * 1000; // 24 hours
-
-    // Draw grid
-    ctx.strokeStyle = 'rgba(128, 128, 128, 0.1)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-      const y = padding + (i / 4) * chartHeight;
-      ctx.beginPath();
-      ctx.moveTo(padding, y);
-      ctx.lineTo(padding + chartWidth, y);
-      ctx.stroke();
+    // Calculate temperature and humidity from mouse position
+    const padding = 60;
+    const chartWidth = canvas.width - padding * 2;
+    const chartHeight = canvas.height - padding * 2;
+    
+    if (x < padding || x > canvas.width - padding || y < padding || y > canvas.height - padding) {
+      tooltip.classList.remove('show');
+      return;
     }
+    
+    const tempRange = this.config.max_temperature - this.config.min_temperature;
+    const humidityRange = this.config.max_humidity - this.config.min_humidity;
+    
+    const temperature = this.config.min_temperature + ((y - padding) / chartHeight) * tempRange;
+    const humidity = this.config.max_humidity - ((x - padding) / chartWidth) * humidityRange;
+    
+    // Get actual air temperature from sensor
+    if (!this._hass) return;
+    const tempEntity = this._hass.states[this.config.temperature_sensor];
+    if (!tempEntity) return;
+    
+    let airTemp = parseFloat(tempEntity.state);
+    const unit = tempEntity.attributes.unit_of_measurement || '°C';
+    
+    // Calculate leaf temperature
+    const leafTemp = temperature - this.config.leaf_temperature_offset;
+    
+    // Calculate VPD
+    const vpd = this.calculateVPD(leafTemp, airTemp, humidity, unit);
+    
+    // Update tooltip
+    tooltip.innerHTML = `
+      <div class="tooltip-line"><strong>Air: ${temperature.toFixed(1)}°C</strong></div>
+      <div class="tooltip-line">Leaf: ${leafTemp.toFixed(1)}°C</div>
+      <div class="tooltip-line">RH: ${humidity.toFixed(0)}%</div>
+      <div class="tooltip-line"><strong>VPD: ${vpd.toFixed(2)} kPa</strong></div>
+    `;
+    tooltip.style.left = `${e.clientX - container.getBoundingClientRect().left}px`;
+    tooltip.style.top = `${e.clientY - container.getBoundingClientRect().top}px`;
+    tooltip.classList.add('show');
+  }
 
-    // Draw VPD line
-    ctx.beginPath();
-    ctx.strokeStyle = '#FFD93D';
-    ctx.lineWidth = 2;
-    this._history.forEach((point, i) => {
-      const x = padding + ((point.timestamp - (now - timeRange)) / timeRange) * chartWidth;
-      const y = padding + chartHeight - ((point.vpd - vpdMin) / (vpdMax - vpdMin)) * chartHeight;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+  handleMouseLeave() {
+    const tooltip = this.shadowRoot.getElementById('tooltip');
+    const hLine = this.shadowRoot.getElementById('h-line');
+    const vLine = this.shadowRoot.getElementById('v-line');
+    
+    tooltip.classList.remove('show');
+    hLine.classList.remove('show');
+    vLine.classList.remove('show');
+  }
 
-    // Draw temperature line
-    ctx.beginPath();
-    ctx.strokeStyle = '#FF6B6B';
-    ctx.lineWidth = 2;
-    this._history.forEach((point, i) => {
-      const x = padding + ((point.timestamp - (now - timeRange)) / timeRange) * chartWidth;
-      const y = padding + chartHeight - ((point.airTemp - tempMin) / (tempMax - tempMin)) * chartHeight;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    // Draw humidity line
-    ctx.beginPath();
-    ctx.strokeStyle = '#4ECDC4';
-    ctx.lineWidth = 2;
-    this._history.forEach((point, i) => {
-      const x = padding + ((point.timestamp - (now - timeRange)) / timeRange) * chartWidth;
-      const y = padding + chartHeight - ((point.humidity - humidityMin) / (humidityMax - humidityMin)) * chartHeight;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    // Draw time labels
-    ctx.fillStyle = '#666';
-    ctx.font = '10px sans-serif';
-    ctx.textAlign = 'center';
-    for (let i = 0; i <= 4; i++) {
-      const x = padding + (i / 4) * chartWidth;
-      const hoursAgo = 24 - (i * 6);
-      ctx.fillText(`${hoursAgo}h`, x, height - 5);
+  handleZoom(e) {
+    e.preventDefault();
+    const canvas = this.shadowRoot.getElementById('vpd-canvas');
+    const zoomDirection = e.deltaY > 0 ? -0.1 : 0.1;
+    
+    let newZoomLevel = this.zoomLevel + zoomDirection;
+    newZoomLevel = Math.min(Math.max(newZoomLevel, this.minZoom), this.maxZoom);
+    newZoomLevel = Math.round(newZoomLevel * 100) / 100;
+    
+    if (newZoomLevel !== this.zoomLevel) {
+      this.zoomLevel = newZoomLevel;
+      canvas.style.transform = `scale(${this.zoomLevel})`;
     }
+  }
+
+  handleMouseDown(e) {
+    this.isPanning = true;
+    this.startX = e.clientX;
+    this.startY = e.clientY;
+    
+    const canvas = this.shadowRoot.getElementById('vpd-canvas');
+    const computedStyle = window.getComputedStyle(canvas);
+    const matrix = new DOMMatrix(computedStyle.transform);
+    
+    this.startLeft = matrix.m41;
+    this.startTop = matrix.m42;
+    
+    e.preventDefault();
+  }
+
+  handleMouseUp() {
+    this.isPanning = false;
   }
 
   updateCard() {
@@ -282,334 +392,182 @@ class VPDChartCard extends HTMLElement {
 
     const tempEntity = this._hass.states[this.config.temperature_sensor];
     const humidityEntity = this._hass.states[this.config.humidity_sensor];
-    
+
     if (!tempEntity || !humidityEntity) return;
 
     let airTemp = parseFloat(tempEntity.state);
     const humidity = parseFloat(humidityEntity.state);
-    
-    // Convert Fahrenheit to Celsius if needed
-    const isFahrenheit = this._hass.config.unit_system.temperature === '°F';
-    if (isFahrenheit) {
-      airTemp = (airTemp - 32) * 5/9;
-    }
-    
+    const unit = tempEntity.attributes.unit_of_measurement || '°C';
+
     // Get leaf temperature
     let leafTemp;
     if (this.config.leaf_temperature_sensor) {
       const leafTempEntity = this._hass.states[this.config.leaf_temperature_sensor];
-      let leafTempRaw = leafTempEntity ? parseFloat(leafTempEntity.state) : airTemp - 2;
-      leafTemp = isFahrenheit ? (leafTempRaw - 32) * 5/9 : leafTempRaw;
+      leafTemp = leafTempEntity ? parseFloat(leafTempEntity.state) : airTemp - this.config.leaf_temperature_offset;
     } else {
-      const offset = this.config.leaf_temperature_offset || -2;
-      leafTemp = airTemp + offset;
+      leafTemp = airTemp - this.config.leaf_temperature_offset;
     }
 
-    // Calculate VPD
-    const vpd = this.calculateVPD(airTemp, humidity, leafTemp);
+    // Calculate VPDs
+    const leafVPD = this.calculateVPD(leafTemp, airTemp, humidity, unit);
+    const roomVPD = this.calculateVPD(airTemp, airTemp, humidity, unit);
 
     // Update display
-    this.updateValues(airTemp, humidity, leafTemp, vpd, isFahrenheit);
-    this.drawVPDChart(airTemp, humidity, leafTemp, vpd);
+    this.updateValues(leafVPD, roomVPD);
+    this.drawVPDChart(airTemp, humidity, leafTemp);
   }
 
-
-
-  calculateVPD(airTemp, humidity, leafTemp) {
-    // This is the correct VPD calculation
-    // VPD = SVP(leaf) - AVP(air)
+  updateValues(leafVPD, roomVPD) {
+    const leafBox = this.shadowRoot.getElementById('leaf-vpd-box');
+    const roomBox = this.shadowRoot.getElementById('room-vpd-box');
     
-    // Saturation vapor pressure at air temperature (kPa)
-    const svpAir = 0.61078 * Math.exp((17.27 * airTemp) / (airTemp + 237.3));
+    // Set colors based on VPD value
+    leafBox.style.background = this.getColorForVpd(leafVPD);
+    roomBox.style.background = this.getColorForVpd(roomVPD);
     
-    // Saturation vapor pressure at leaf temperature (kPa)
-    const svpLeaf = 0.61078 * Math.exp((17.27 * leafTemp) / (leafTemp + 237.3));
-    
-    // Actual vapor pressure based on air temp and humidity (kPa)
-    const avp = svpAir * (humidity / 100);
-    
-    // VPD is the difference between leaf SVP and actual air VP
-    const vpd = svpLeaf - avp;
-    
-    return Math.max(0, vpd);
-  }
-
-  calculateVPDFromLeaf(leafTemp, humidity) {
-    // Simplified VPD calculation when we only have leaf temp
-    // Assumes air temp is slightly higher than leaf temp
-    const estimatedAirTemp = leafTemp + 2;
-    return this.calculateVPD(estimatedAirTemp, humidity, leafTemp);
-  }
-
-  updateValues(airTemp, humidity, leafTemp, leafVPD, isFahrenheit) {
-    // Calculate Room VPD (air temp to air temp)
-    const roomVPD = this.calculateVPD(airTemp, humidity, airTemp);
-    
-    // Leaf VPD (the correct one for plants!)
     this.shadowRoot.getElementById('leaf-vpd-value').innerHTML = 
-      `${leafVPD.toFixed(2)}<span class="value-unit">kPa</span>`;
-    
-    // Room VPD (for reference)
+      `${leafVPD.toFixed(2)}<span class="vpd-unit">kPa</span>`;
     this.shadowRoot.getElementById('room-vpd-value').innerHTML = 
-      `${roomVPD.toFixed(2)}<span class="value-unit">kPa</span>`;
+      `${roomVPD.toFixed(2)}<span class="vpd-unit">kPa</span>`;
   }
 
-  updateStatus(vpd, stage) {
-    const statusEl = this.shadowRoot.getElementById('vpd-status');
-    
-    // VPD ranges based on growth stage
-    const ranges = {
-      seedling: { optimal: [0.4, 0.8], acceptable: [0.2, 1.0] },
-      vegetative: { optimal: [0.8, 1.2], acceptable: [0.6, 1.4] },
-      flowering: { optimal: [1.0, 1.5], acceptable: [0.8, 1.6] },
-      late_flower: { optimal: [1.2, 1.6], acceptable: [1.0, 1.8] }
-    };
-    
-    const range = ranges[stage] || ranges.vegetative;
-    
-    let status, message;
-    if (vpd >= range.optimal[0] && vpd <= range.optimal[1]) {
-      status = 'optimal';
-      message = `✓ Optimal VPD for ${stage.replace('_', ' ')}`;
-    } else if (vpd >= range.acceptable[0] && vpd <= range.acceptable[1]) {
-      status = 'acceptable';
-      message = `~ Acceptable VPD for ${stage.replace('_', ' ')}`;
-    } else if (vpd < range.acceptable[0]) {
-      status = 'warning';
-      message = `⚠ VPD too low - Increase temperature or decrease humidity`;
-    } else {
-      status = 'danger';
-      message = `⚠ VPD too high - Decrease temperature or increase humidity`;
-    }
-    
-    statusEl.className = `vpd-status ${status}`;
-    statusEl.textContent = message;
-  }
-
-  drawVPDChart(currentTemp, currentHumidity, leafTemp, currentVPD) {
+  drawVPDChart(currentTemp, currentHumidity, leafTemp) {
     const canvas = this.shadowRoot.getElementById('vpd-canvas');
     if (!canvas) return;
 
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = 600 * dpr;
+    canvas.height = 400 * dpr;
+    
     const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
+    ctx.scale(dpr, dpr);
+    
+    const width = 600;
+    const height = 400;
     const padding = 60;
     const chartWidth = width - padding * 2;
     const chartHeight = height - padding * 2;
 
     ctx.clearRect(0, 0, width, height);
 
-    // LEAF Temperature range (not air temp!) - this is what matters for VPD
-    const leafTempMin = 13; // Leaf temp is typically 2-4°C cooler
-    const leafTempMax = 33;
-    const humidityMin = 30;
-    const humidityMax = 90;
-
-    // Draw VPD zones based on LEAF temperature
-    this.drawVPDZones(ctx, padding, chartWidth, chartHeight, leafTempMin, leafTempMax, humidityMin, humidityMax);
-
-    // Draw grid lines
-    this.drawGrid(ctx, padding, chartWidth, chartHeight, leafTempMin, leafTempMax, humidityMin, humidityMax, true);
-
-    // Draw current point using LEAF temperature
-    this.drawCurrentPoint(ctx, padding, chartWidth, chartHeight, leafTemp, currentHumidity, leafTempMin, leafTempMax, humidityMin, humidityMax);
-
+    // Draw VPD zones
+    this.drawVPDZones(ctx, padding, chartWidth, chartHeight);
+    
+    // Draw grid
+    this.drawGrid(ctx, padding, chartWidth, chartHeight);
+    
+    // Draw current point
+    this.drawCurrentPoint(ctx, padding, chartWidth, chartHeight, currentTemp, currentHumidity);
+    
     // Draw axes labels
-    this.drawAxes(ctx, width, height, padding, true);
+    this.drawAxes(ctx, width, height, padding);
   }
 
-  drawVPDZones(ctx, padding, chartWidth, chartHeight, leafTempMin, leafTempMax, humidityMin, humidityMax) {
-    // Calculate VPD for each point and color accordingly
-    const resolution = 30; // Higher resolution for smoother gradients
-    
-    const stage = this.config.growth_stage || 'vegetative';
-    const ranges = {
-      seedling: { optimal: [0.4, 0.8], acceptable: [0.2, 1.0] },
-      vegetative: { optimal: [0.8, 1.2], acceptable: [0.6, 1.4] },
-      flowering: { optimal: [1.0, 1.5], acceptable: [0.8, 1.6] },
-      late_flower: { optimal: [1.2, 1.6], acceptable: [1.0, 1.8] }
-    };
-    const range = ranges[stage] || ranges.vegetative;
-    
+  drawVPDZones(ctx, padding, chartWidth, chartHeight) {
+    const resolution = 50;
+    const tempRange = this.config.max_temperature - this.config.min_temperature;
+    const humidityRange = this.config.max_humidity - this.config.min_humidity;
+
     for (let i = 0; i < resolution; i++) {
       for (let j = 0; j < resolution; j++) {
-        const leafTemp = leafTempMin + (i / resolution) * (leafTempMax - leafTempMin);
-        const humidity = humidityMin + (j / resolution) * (humidityMax - humidityMin);
+        const airTemp = this.config.min_temperature + (i / resolution) * tempRange;
+        const humidity = this.config.max_humidity - (j / resolution) * humidityRange;
+        const leafTemp = airTemp - this.config.leaf_temperature_offset;
         
-        // Calculate VPD correctly: need air temp estimate
-        const airTemp = leafTemp + 2; // Estimate air temp from leaf temp
-        const vpd = this.calculateVPD(airTemp, humidity, leafTemp);
-        
-        const x = padding + (leafTemp - leafTempMin) / (leafTempMax - leafTempMin) * chartWidth;
-        const y = padding + chartHeight - (humidity - humidityMin) / (humidityMax - humidityMin) * chartHeight;
+        const vpd = this.calculateVPD(leafTemp, airTemp, humidity);
+        const color = this.getColorForVpd(vpd);
+
+        const x = padding + (i / resolution) * chartWidth;
+        const y = padding + (j / resolution) * chartHeight;
         const cellWidth = chartWidth / resolution;
         const cellHeight = chartHeight / resolution;
-        
-        // Color based on VPD value and growth stage
-        let color;
-        if (vpd < range.acceptable[0]) {
-          // Too low - Blue
-          const intensity = Math.max(0.2, 1 - (range.acceptable[0] - vpd) / range.acceptable[0]);
-          color = `rgba(33, 150, 243, ${intensity * 0.4})`;
-        } else if (vpd < range.optimal[0]) {
-          // Low acceptable - Light green
-          color = 'rgba(139, 195, 74, 0.35)';
-        } else if (vpd >= range.optimal[0] && vpd <= range.optimal[1]) {
-          // Optimal - Bright green
-          color = 'rgba(76, 175, 80, 0.5)';
-        } else if (vpd <= range.acceptable[1]) {
-          // High acceptable - Yellow
-          color = 'rgba(255, 235, 59, 0.35)';
-        } else {
-          // Too high - Red
-          const intensity = Math.min(1, (vpd - range.acceptable[1]) / 0.5);
-          color = `rgba(244, 67, 54, ${0.25 + intensity * 0.25})`;
-        }
-        
+
         ctx.fillStyle = color;
-        ctx.fillRect(x, y - cellHeight, cellWidth, cellHeight);
+        ctx.fillRect(x, y, cellWidth, cellHeight);
       }
     }
   }
 
-  drawGrid(ctx, padding, chartWidth, chartHeight, tempMin, tempMax, humidityMin, humidityMax, isLeafTemp = false) {
-    ctx.strokeStyle = 'rgba(128, 128, 128, 0.2)';
+  drawGrid(ctx, padding, chartWidth, chartHeight) {
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 1;
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#666';
 
     // Vertical lines (temperature)
-    for (let temp = tempMin; temp <= tempMax; temp += 5) {
-      const x = padding + (temp - tempMin) / (tempMax - tempMin) * chartWidth;
+    const tempStep = 5;
+    for (let temp = this.config.min_temperature; temp <= this.config.max_temperature; temp += tempStep) {
+      const x = padding + ((temp - this.config.min_temperature) / (this.config.max_temperature - this.config.min_temperature)) * chartWidth;
+      
       ctx.beginPath();
       ctx.moveTo(x, padding);
       ctx.lineTo(x, padding + chartHeight);
       ctx.stroke();
-      
-      // Labels
-      ctx.fillStyle = '#666';
-      ctx.font = '12px sans-serif';
+
       ctx.textAlign = 'center';
       ctx.fillText(`${temp}°`, x, padding + chartHeight + 20);
     }
 
     // Horizontal lines (humidity)
-    for (let humidity = humidityMin; humidity <= humidityMax; humidity += 10) {
-      const y = padding + chartHeight - (humidity - humidityMin) / (humidityMax - humidityMin) * chartHeight;
+    const humidityStep = 10;
+    for (let humidity = this.config.min_humidity; humidity <= this.config.max_humidity; humidity += humidityStep) {
+      const y = padding + chartHeight - ((humidity - this.config.min_humidity) / (this.config.max_humidity - this.config.min_humidity)) * chartHeight;
+      
       ctx.beginPath();
       ctx.moveTo(padding, y);
       ctx.lineTo(padding + chartWidth, y);
       ctx.stroke();
-      
-      // Labels
-      ctx.fillStyle = '#666';
-      ctx.font = '12px sans-serif';
+
       ctx.textAlign = 'right';
       ctx.fillText(`${humidity}%`, padding - 10, y + 4);
     }
   }
 
-  drawCurrentPoint(ctx, padding, chartWidth, chartHeight, temp, humidity, tempMin, tempMax, humidityMin, humidityMax) {
-    const x = padding + (temp - tempMin) / (tempMax - tempMin) * chartWidth;
-    const y = padding + chartHeight - (humidity - humidityMin) / (humidityMax - humidityMin) * chartHeight;
+  drawCurrentPoint(ctx, padding, chartWidth, chartHeight, temp, humidity) {
+    const x = padding + ((temp - this.config.min_temperature) / (this.config.max_temperature - this.config.min_temperature)) * chartWidth;
+    const y = padding + chartHeight - ((humidity - this.config.min_humidity) / (this.config.max_humidity - this.config.min_humidity)) * chartHeight;
 
-    // Draw crosshair
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.lineWidth = 2;
+    // Draw crosshair lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 1;
     ctx.setLineDash([5, 5]);
-    
+
     ctx.beginPath();
     ctx.moveTo(padding, y);
     ctx.lineTo(padding + chartWidth, y);
     ctx.stroke();
-    
+
     ctx.beginPath();
     ctx.moveTo(x, padding);
     ctx.lineTo(x, padding + chartHeight);
     ctx.stroke();
-    
+
     ctx.setLineDash([]);
 
     // Draw point
     ctx.beginPath();
-    ctx.arc(x, y, 8, 0, 2 * Math.PI);
+    ctx.arc(x, y, 6, 0, 2 * Math.PI);
     ctx.fillStyle = '#FF4081';
     ctx.fill();
     ctx.strokeStyle = 'white';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2;
     ctx.stroke();
   }
 
-  drawAxes(ctx, width, height, padding, isLeafTemp = false) {
+  drawAxes(ctx, width, height, padding) {
     ctx.fillStyle = '#333';
     ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center';
-    
-    // X-axis label - now shows LEAF temperature
-    ctx.fillText('Leaf Temperature (°C)', width / 2, height - 10);
-    
+
+    // X-axis label
+    ctx.fillText('Air Temperature (°C)', width / 2, height - 5);
+
     // Y-axis label
     ctx.save();
     ctx.translate(15, height / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.fillText('Relative Humidity (%)', 0, 0);
     ctx.restore();
-  }
-
-  setupInteraction() {
-    const canvas = this.shadowRoot.getElementById('vpd-canvas');
-    const tooltip = this.shadowRoot.getElementById('tooltip');
-    
-    if (!canvas || !tooltip) return;
-
-    canvas.addEventListener('mousemove', (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      
-      // Calculate temp and humidity from position
-      const padding = 60;
-      const chartWidth = canvas.width - padding * 2;
-      const chartHeight = canvas.height - padding * 2;
-      
-      if (x < padding || x > canvas.width - padding || y < padding || y > canvas.height - padding) {
-        tooltip.classList.remove('show');
-        return;
-      }
-      
-      // Use LEAF temperature range (same as chart)
-      const leafTempMin = 13;
-      const leafTempMax = 33;
-      const humidityMin = 30;
-      const humidityMax = 90;
-      
-      const leafTemp = leafTempMin + (x - padding) / chartWidth * (leafTempMax - leafTempMin);
-      const humidity = humidityMax - (y - padding) / chartHeight * (humidityMax - humidityMin);
-      
-      // Get actual current air temperature from sensor
-      if (!this._hass) return;
-      const tempEntity = this._hass.states[this.config.temperature_sensor];
-      if (!tempEntity) return;
-      
-      let airTemp = parseFloat(tempEntity.state);
-      const isFahrenheit = this._hass.config.unit_system.temperature === '°F';
-      if (isFahrenheit) {
-        airTemp = (airTemp - 32) * 5/9;
-      }
-      
-      // Calculate VPD using actual air temp and the hovered leaf temp
-      const vpd = this.calculateVPD(airTemp, humidity, leafTemp);
-      
-      tooltip.innerHTML = `
-        <strong>Leaf: ${leafTemp.toFixed(1)}°C, RH: ${humidity.toFixed(0)}%</strong><br>
-        Leaf VPD: ${vpd.toFixed(2)} kPa
-      `;
-      tooltip.style.left = `${e.clientX - rect.left + 15}px`;
-      tooltip.style.top = `${e.clientY - rect.top - 40}px`;
-      tooltip.classList.add('show');
-    });
-
-    canvas.addEventListener('mouseleave', () => {
-      tooltip.classList.remove('show');
-    });
   }
 
   getCardSize() {
@@ -620,9 +578,8 @@ class VPDChartCard extends HTMLElement {
     return {
       temperature_sensor: 'sensor.temperature',
       humidity_sensor: 'sensor.humidity',
-      leaf_temperature_offset: -2,
+      leaf_temperature_offset: 2,
       growth_stage: 'vegetative',
-      show_history: true,
       title: 'VPD Chart'
     };
   }
