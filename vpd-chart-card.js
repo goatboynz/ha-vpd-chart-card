@@ -40,11 +40,16 @@ class VPDChartCard extends HTMLElement {
           position: relative;
           width: 100%;
           padding: 20px;
+          background: linear-gradient(180deg, 
+            rgba(var(--rgb-primary-color, 33, 150, 243), 0.02) 0%, 
+            transparent 100%);
         }
         canvas {
           width: 100%;
           height: 100%;
-          border-radius: 8px;
+          border-radius: 12px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+          background: var(--card-background-color);
         }
         .current-values {
           display: grid;
@@ -54,53 +59,89 @@ class VPDChartCard extends HTMLElement {
         }
         .value-box {
           background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
-          padding: 16px;
-          border-radius: 10px;
+          padding: 18px;
+          border-radius: 12px;
           text-align: center;
           color: white;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          transition: transform 0.2s, box-shadow 0.2s;
+          position: relative;
+          overflow: hidden;
+        }
+        .value-box::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: linear-gradient(135deg, rgba(255,255,255,0.1), transparent);
+          pointer-events: none;
+        }
+        .value-box:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 16px rgba(0,0,0,0.2);
         }
         .value-label {
           font-size: 11px;
-          opacity: 0.9;
-          margin-bottom: 4px;
+          opacity: 0.95;
+          margin-bottom: 6px;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.8px;
+          font-weight: 600;
         }
         .value-number {
-          font-size: 28px;
+          font-size: 32px;
           font-weight: 700;
           line-height: 1;
+          text-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .value-unit {
-          font-size: 14px;
-          opacity: 0.8;
-          margin-left: 2px;
+          font-size: 16px;
+          opacity: 0.85;
+          margin-left: 3px;
+          font-weight: 500;
         }
         .vpd-status {
           margin: 0 20px 20px 20px;
-          padding: 16px;
-          border-radius: 10px;
+          padding: 18px;
+          border-radius: 12px;
           text-align: center;
           font-weight: 600;
-          font-size: 14px;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          font-size: 15px;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          position: relative;
+          overflow: hidden;
+        }
+        .vpd-status::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
+          pointer-events: none;
         }
         .vpd-status.optimal {
           background: linear-gradient(135deg, #4CAF50, #45a049);
           color: white;
+          box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
         }
         .vpd-status.acceptable {
           background: linear-gradient(135deg, #FFC107, #FFB300);
           color: white;
+          box-shadow: 0 4px 12px rgba(255, 193, 7, 0.3);
         }
         .vpd-status.warning {
           background: linear-gradient(135deg, #FF9800, #F57C00);
           color: white;
+          box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);
         }
         .vpd-status.danger {
           background: linear-gradient(135deg, #F44336, #E53935);
           color: white;
+          box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
         }
         .tooltip {
           position: absolute;
@@ -354,19 +395,29 @@ class VPDChartCard extends HTMLElement {
   }
 
   calculateVPD(airTemp, humidity, leafTemp) {
+    // This is the correct VPD calculation
+    // VPD = SVP(leaf) - AVP(air)
+    
     // Saturation vapor pressure at air temperature (kPa)
     const svpAir = 0.61078 * Math.exp((17.27 * airTemp) / (airTemp + 237.3));
     
     // Saturation vapor pressure at leaf temperature (kPa)
     const svpLeaf = 0.61078 * Math.exp((17.27 * leafTemp) / (leafTemp + 237.3));
     
-    // Actual vapor pressure (kPa)
+    // Actual vapor pressure based on air temp and humidity (kPa)
     const avp = svpAir * (humidity / 100);
     
-    // VPD (kPa)
+    // VPD is the difference between leaf SVP and actual air VP
     const vpd = svpLeaf - avp;
     
     return Math.max(0, vpd);
+  }
+
+  calculateVPDFromLeaf(leafTemp, humidity) {
+    // Simplified VPD calculation when we only have leaf temp
+    // Assumes air temp is slightly higher than leaf temp
+    const estimatedAirTemp = leafTemp + 2;
+    return this.calculateVPD(estimatedAirTemp, humidity, leafTemp);
   }
 
   updateValues(airTemp, humidity, leafTemp, vpd, isFahrenheit) {
@@ -431,26 +482,26 @@ class VPDChartCard extends HTMLElement {
 
     ctx.clearRect(0, 0, width, height);
 
-    // Temperature range (15-35°C or 59-95°F)
-    const tempMin = 15;
-    const tempMax = 35;
+    // LEAF Temperature range (not air temp!) - this is what matters for VPD
+    const leafTempMin = 13; // Leaf temp is typically 2-4°C cooler
+    const leafTempMax = 33;
     const humidityMin = 30;
     const humidityMax = 90;
 
-    // Draw VPD zones as colored rectangles
-    this.drawVPDZones(ctx, padding, chartWidth, chartHeight, tempMin, tempMax, humidityMin, humidityMax, leafTemp);
+    // Draw VPD zones based on LEAF temperature
+    this.drawVPDZones(ctx, padding, chartWidth, chartHeight, leafTempMin, leafTempMax, humidityMin, humidityMax);
 
     // Draw grid lines
-    this.drawGrid(ctx, padding, chartWidth, chartHeight, tempMin, tempMax, humidityMin, humidityMax);
+    this.drawGrid(ctx, padding, chartWidth, chartHeight, leafTempMin, leafTempMax, humidityMin, humidityMax, true);
 
-    // Draw current point
-    this.drawCurrentPoint(ctx, padding, chartWidth, chartHeight, currentTemp, currentHumidity, tempMin, tempMax, humidityMin, humidityMax);
+    // Draw current point using LEAF temperature
+    this.drawCurrentPoint(ctx, padding, chartWidth, chartHeight, leafTemp, currentHumidity, leafTempMin, leafTempMax, humidityMin, humidityMax);
 
     // Draw axes labels
-    this.drawAxes(ctx, width, height, padding);
+    this.drawAxes(ctx, width, height, padding, true);
   }
 
-  drawVPDZones(ctx, padding, chartWidth, chartHeight, tempMin, tempMax, humidityMin, humidityMax, leafTemp) {
+  drawVPDZones(ctx, padding, chartWidth, chartHeight, leafTempMin, leafTempMax, humidityMin, humidityMax) {
     // Calculate VPD for each point and color accordingly
     const resolution = 30; // Higher resolution for smoother gradients
     
@@ -465,11 +516,13 @@ class VPDChartCard extends HTMLElement {
     
     for (let i = 0; i < resolution; i++) {
       for (let j = 0; j < resolution; j++) {
-        const temp = tempMin + (i / resolution) * (tempMax - tempMin);
+        const leafTemp = leafTempMin + (i / resolution) * (leafTempMax - leafTempMin);
         const humidity = humidityMin + (j / resolution) * (humidityMax - humidityMin);
-        const vpd = this.calculateVPD(temp, humidity, leafTemp);
         
-        const x = padding + (temp - tempMin) / (tempMax - tempMin) * chartWidth;
+        // Calculate VPD using leaf temperature (this is the correct way!)
+        const vpd = this.calculateVPDFromLeaf(leafTemp, humidity);
+        
+        const x = padding + (leafTemp - leafTempMin) / (leafTempMax - leafTempMin) * chartWidth;
         const y = padding + chartHeight - (humidity - humidityMin) / (humidityMax - humidityMin) * chartHeight;
         const cellWidth = chartWidth / resolution;
         const cellHeight = chartHeight / resolution;
@@ -501,7 +554,7 @@ class VPDChartCard extends HTMLElement {
     }
   }
 
-  drawGrid(ctx, padding, chartWidth, chartHeight, tempMin, tempMax, humidityMin, humidityMax) {
+  drawGrid(ctx, padding, chartWidth, chartHeight, tempMin, tempMax, humidityMin, humidityMax, isLeafTemp = false) {
     ctx.strokeStyle = 'rgba(128, 128, 128, 0.2)';
     ctx.lineWidth = 1;
 
@@ -567,13 +620,13 @@ class VPDChartCard extends HTMLElement {
     ctx.stroke();
   }
 
-  drawAxes(ctx, width, height, padding) {
+  drawAxes(ctx, width, height, padding, isLeafTemp = false) {
     ctx.fillStyle = '#333';
     ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center';
     
-    // X-axis label
-    ctx.fillText('Air Temperature (°C)', width / 2, height - 10);
+    // X-axis label - now shows LEAF temperature
+    ctx.fillText('Leaf Temperature (°C)', width / 2, height - 10);
     
     // Y-axis label
     ctx.save();
