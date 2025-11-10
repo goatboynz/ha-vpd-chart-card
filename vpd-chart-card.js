@@ -111,7 +111,7 @@ class VPDChartCard extends HTMLElement {
         }
         canvas {
           width: 100%;
-          height: 400px;
+          height: 300px;
           display: block;
         }
         .crosshair {
@@ -162,50 +162,52 @@ class VPDChartCard extends HTMLElement {
         .vpd-values {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
-          gap: 12px;
+          gap: 16px;
           padding: 0 16px 16px 16px;
         }
         .vpd-box {
-          padding: 12px;
-          border-radius: 8px;
+          padding: 16px 20px;
+          border-radius: 12px;
           text-align: center;
           color: white;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          transition: all 0.3s ease;
+          position: relative;
+          overflow: hidden;
+        }
+        .vpd-box::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
+          pointer-events: none;
+        }
+        .vpd-box:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 16px rgba(0,0,0,0.2);
         }
         .vpd-label {
-          font-size: 11px;
-          opacity: 0.9;
-          margin-bottom: 4px;
+          font-size: 10px;
+          opacity: 0.95;
+          margin-bottom: 6px;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
-          font-weight: 600;
-        }
-        .vpd-number {
-          font-size: 24px;
+          letter-spacing: 0.8px;
           font-weight: 700;
         }
+        .vpd-number {
+          font-size: 32px;
+          font-weight: 800;
+          line-height: 1;
+          text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
         .vpd-unit {
-          font-size: 14px;
-          opacity: 0.85;
-          margin-left: 2px;
-        }
-        .vpd-legend {
-          display: flex;
-          justify-content: center;
-          flex-wrap: wrap;
-          gap: 8px;
-          padding: 0 16px 16px 16px;
-          font-size: 11px;
-        }
-        .legend-item {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-        }
-        .legend-color {
-          width: 16px;
-          height: 16px;
-          border-radius: 3px;
+          font-size: 16px;
+          opacity: 0.9;
+          margin-left: 3px;
+          font-weight: 600;
         }
       </style>
       <ha-card>
@@ -226,31 +228,10 @@ class VPDChartCard extends HTMLElement {
             <div class="vpd-number" id="room-vpd-value">--</div>
           </div>
         </div>
-        <div class="vpd-legend" id="legend"></div>
       </ha-card>
     `;
 
     this.setupEventListeners();
-    this.buildLegend();
-  }
-
-  buildLegend() {
-    const legend = this.shadowRoot.getElementById('legend');
-    const labels = {
-      'gray-danger-zone': 'Too Low',
-      'under-transpiration': 'Under Transpiration',
-      'early-veg': 'Early Veg',
-      'late-veg': 'Late Veg',
-      'mid-late-flower': 'Mid-Late Flower',
-      'danger-zone': 'Too High'
-    };
-    
-    legend.innerHTML = this.vpd_phases.map(phase => `
-      <div class="legend-item">
-        <div class="legend-color" style="background-color: ${phase.color}"></div>
-        <span>${labels[phase.className] || phase.className}</span>
-      </div>
-    `).join('');
   }
 
   setupEventListeners() {
@@ -437,13 +418,13 @@ class VPDChartCard extends HTMLElement {
 
     const dpr = window.devicePixelRatio || 1;
     canvas.width = 600 * dpr;
-    canvas.height = 400 * dpr;
+    canvas.height = 300 * dpr;
     
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
     
     const width = 600;
-    const height = 400;
+    const height = 300;
     const padding = 60;
     const chartWidth = width - padding * 2;
     const chartHeight = height - padding * 2;
