@@ -584,8 +584,18 @@ class VPDChartCard extends HTMLElement {
       const leafTemp = leafTempMin + (x - padding) / chartWidth * (leafTempMax - leafTempMin);
       const humidity = humidityMax - (y - padding) / chartHeight * (humidityMax - humidityMin);
       
-      // Calculate VPD correctly (estimate air temp from leaf temp)
-      const airTemp = leafTemp + 2;
+      // Get actual current air temperature from sensor
+      if (!this._hass) return;
+      const tempEntity = this._hass.states[this.config.temperature_sensor];
+      if (!tempEntity) return;
+      
+      let airTemp = parseFloat(tempEntity.state);
+      const isFahrenheit = this._hass.config.unit_system.temperature === '°F';
+      if (isFahrenheit) {
+        airTemp = (airTemp - 32) * 5/9;
+      }
+      
+      // Calculate VPD using actual air temp and the hovered leaf temp
       const vpd = this.calculateVPD(airTemp, humidity, leafTemp);
       
       tooltip.innerHTML = `
