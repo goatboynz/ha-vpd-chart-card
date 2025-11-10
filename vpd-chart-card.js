@@ -55,7 +55,51 @@ class VPDChartCard extends HTMLElement {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
           gap: 12px;
+          padding: 0 20px 12px 20px;
+        }
+        .vpd-values {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
           padding: 0 20px 20px 20px;
+        }
+        .vpd-box {
+          padding: 20px;
+          border-radius: 12px;
+          text-align: center;
+          color: white;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          transition: transform 0.2s, box-shadow 0.2s;
+          position: relative;
+          overflow: hidden;
+        }
+        .vpd-box::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: linear-gradient(135deg, rgba(255,255,255,0.1), transparent);
+          pointer-events: none;
+        }
+        .vpd-box:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+        }
+        .vpd-label {
+          font-size: 12px;
+          opacity: 0.95;
+          margin-bottom: 8px;
+          text-transform: uppercase;
+          letter-spacing: 0.8px;
+          font-weight: 600;
+        }
+        .vpd-number {
+          font-size: 36px;
+          font-weight: 700;
+          line-height: 1;
+          text-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .value-box {
           background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
@@ -199,7 +243,7 @@ class VPDChartCard extends HTMLElement {
         <div class="vpd-status" id="vpd-status"></div>
         <div class="current-values">
           <div class="value-box" style="background: linear-gradient(135deg, #FF6B6B, #EE5A6F);">
-            <div class="value-label">Temperature</div>
+            <div class="value-label">Air Temperature</div>
             <div class="value-number" id="temp-value">--</div>
           </div>
           <div class="value-box" style="background: linear-gradient(135deg, #4ECDC4, #44A08D);">
@@ -210,9 +254,15 @@ class VPDChartCard extends HTMLElement {
             <div class="value-label">Leaf Temp</div>
             <div class="value-number" id="leaf-temp-value">--</div>
           </div>
-          <div class="value-box" style="background: linear-gradient(135deg, #FFD93D, #F6C90E);">
-            <div class="value-label">VPD</div>
-            <div class="value-number" id="vpd-value">--</div>
+        </div>
+        <div class="vpd-values">
+          <div class="vpd-box" style="background: linear-gradient(135deg, #FFD93D, #F6C90E);">
+            <div class="vpd-label">Leaf VPD</div>
+            <div class="vpd-number" id="leaf-vpd-value">--</div>
+          </div>
+          <div class="vpd-box" style="background: linear-gradient(135deg, #FF9F43, #EE5A24);">
+            <div class="vpd-label">Room VPD</div>
+            <div class="vpd-number" id="room-vpd-value">--</div>
           </div>
         </div>
         <div class="history-container">
@@ -420,12 +470,15 @@ class VPDChartCard extends HTMLElement {
     return this.calculateVPD(estimatedAirTemp, humidity, leafTemp);
   }
 
-  updateValues(airTemp, humidity, leafTemp, vpd, isFahrenheit) {
+  updateValues(airTemp, humidity, leafTemp, leafVPD, isFahrenheit) {
     const tempUnit = this._hass.config.unit_system.temperature;
     
     // Convert back to Fahrenheit for display if needed
     const displayAirTemp = isFahrenheit ? (airTemp * 9/5) + 32 : airTemp;
     const displayLeafTemp = isFahrenheit ? (leafTemp * 9/5) + 32 : leafTemp;
+    
+    // Calculate Room VPD (air temp to air temp)
+    const roomVPD = this.calculateVPD(airTemp, humidity, airTemp);
     
     this.shadowRoot.getElementById('temp-value').innerHTML = 
       `${displayAirTemp.toFixed(1)}<span class="value-unit">${tempUnit}</span>`;
@@ -433,8 +486,14 @@ class VPDChartCard extends HTMLElement {
       `${humidity.toFixed(0)}<span class="value-unit">%</span>`;
     this.shadowRoot.getElementById('leaf-temp-value').innerHTML = 
       `${displayLeafTemp.toFixed(1)}<span class="value-unit">${tempUnit}</span>`;
-    this.shadowRoot.getElementById('vpd-value').innerHTML = 
-      `${vpd.toFixed(2)}<span class="value-unit">kPa</span>`;
+    
+    // Leaf VPD (the correct one for plants!)
+    this.shadowRoot.getElementById('leaf-vpd-value').innerHTML = 
+      `${leafVPD.toFixed(2)}<span class="value-unit">kPa</span>`;
+    
+    // Room VPD (for reference)
+    this.shadowRoot.getElementById('room-vpd-value').innerHTML = 
+      `${roomVPD.toFixed(2)}<span class="value-unit">kPa</span>`;
   }
 
   updateStatus(vpd, stage) {
@@ -657,20 +716,21 @@ class VPDChartCard extends HTMLElement {
         return;
       }
       
-      const tempMin = 15;
-      const tempMax = 35;
+      // Use LEAF temperature range (same as chart)
+      const leafTempMin = 13;
+      const leafTempMax = 33;
       const humidityMin = 30;
       const humidityMax = 90;
       
-      const temp = tempMin + (x - padding) / chartWidth * (tempMax - tempMin);
+      const leafTemp = leafTempMin + (x - padding) / chartWidth * (leafTempMax - leafTempMin);
       const humidity = humidityMax - (y - padding) / chartHeight * (humidityMax - humidityMin);
       
-      const leafTemp = temp - 2; // Approximate
-      const vpd = this.calculateVPD(temp, humidity, leafTemp);
+      // Calculate VPD using leaf temperature
+      const vpd = this.calculateVPDFromLeaf(leafTemp, humidity);
       
       tooltip.innerHTML = `
-        <strong>${temp.toFixed(1)}°C, ${humidity.toFixed(0)}%</strong><br>
-        VPD: ${vpd.toFixed(2)} kPa
+        <strong>Leaf: ${leafTemp.toFixed(1)}°C, RH: ${humidity.toFixed(0)}%</strong><br>
+        Leaf VPD: ${vpd.toFixed(2)} kPa
       `;
       tooltip.style.left = `${e.clientX - rect.left + 15}px`;
       tooltip.style.top = `${e.clientY - rect.top - 40}px`;
